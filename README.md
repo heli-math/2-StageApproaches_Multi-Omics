@@ -8,7 +8,7 @@ The codes are used for simulation study by 2-stage approaches. There are
 
     Stage 1: Obtain $\hat{Y}$ from $X$ by Lasso regression.
 
-    Stage 2: Predict $Z$ from $Y$ by Ridge regression.
+    Stage 2: Predict $Z$ from $\hat{Y}$ by Ridge regression.
 
 2.  Multivariate methods — O2PLS
 
