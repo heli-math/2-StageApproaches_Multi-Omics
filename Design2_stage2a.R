@@ -12,7 +12,7 @@ library(MASS)
 
 # 1. load X and C --------------------------------------------------------------
 source('00_function.R')
-load('X_all.RData') # X is generated from PO2PLS once and fixed
+load('X_all_raw_new.RData') # X is generated from PO2PLS once and fixed
 load('C_raw.RData') # C_ij iid b(1,0.8)
 
 r=8; rx=2; ry=1
@@ -114,39 +114,12 @@ for(N in c(200,2000)){
       
       #### APPROACH 2: O2PLS ####
       
-      ## choose r before fit model
-      choose_r <- function(r_try = 1:(q-rx)){
-        r_hats <- sapply(r_try, function(ii){
-          fit.o2m <- o2m(X.train, Y.train, n=ii,nx=0,ny=0)
-          T.estim <- X.train %*% fit.o2m$W.
-          X.test.A <- X.test[1:(Nh/2),]
-          X.test.B <- X.test[(Nh/2+1):Nh,]
-          Z.test.A <- Z.test[1:(Nh/2)]
-          Z.test.B <- Z.test[-(1:(Nh/2))]
-          T.test.A.estim <- X.test.A %*% fit.o2m$W.
-          T.test.B.estim <- X.test.B %*% fit.o2m$W.
-          
-          # Z~T regression
-          T.dat <- data.frame(V = T.test.A.estim)
-          T.o2mfit <- lm(Z.test.A ~ ., data = T.dat) # estimation of a and a0
-          Z.test.A.pred <- predict(T.o2mfit, newdata = data.frame(V = T.test.A.estim))
-          Z.test.B.pred <- predict(T.o2mfit, newdata = data.frame(V = T.test.B.estim))
-          
-          sst.Z <- sum((Z.test.B - mean(Z.test.B))^2)
-          sse.Z <- sum((Z.test.B - Z.test.B.pred)^2)
-          rsq.Z.o2m <- 1 - sse.Z / sst.Z
-          return(rsq.Z.o2m)
-        })
-        r_try[which.max(r_hats)]
-      }
-      r <- choose_r(1:(q-rx))
-      
       ## follow the previous procedure
       fit.o2m <- o2m(X.train, Y.train, n=r,nx=rx,ny=ry)
       Tt.train.estim <- X.train %*% fit.o2m$W. %>% as.data.frame
       Tt.test.estim <- X.test %*% fit.o2m$W. %>% as.data.frame
       
-      # Z~T regression
+      # Z~T linear regression
       Tt.o2mfit <- lm(Z.train ~ . -1, data = Tt.train.estim)
       Z.train.pred <- predict(Tt.o2mfit, newdata = Tt.train.estim)
       Z.test.pred <- predict(Tt.o2mfit, newdata = Tt.test.estim)
@@ -154,17 +127,16 @@ for(N in c(200,2000)){
       sst.Z <- sum((Z.test - mean(Z.test))^2)
       sse.Z <- sum((Z.test - Z.test.pred)^2)
       rsq.Z.o2m <- 1 - sse.Z / sst.Z
-      rsq.Z.o2m
       
       rmse.Z.o2m.train <- sqrt(mean((Z.train - Z.train.pred)^2))
       rmse.Z.o2m.test <- sqrt(mean((Z.test - Z.test.pred)^2))
       
       #### APPROACH 3: PO2PLS ####
-      fit.po2m <- PO2PLS(X.train, Y.train, r=r,rx=rx,ry=ry,steps=1e1)
+      fit.po2m <- PO2PLS(X.train, Y.train, r=r,rx=rx,ry=ry,steps=1e3)
       Tt.train.estim <- X.train %*% fit.po2m$par$W %>% data.frame
       Tt.test.estim <- X.test %*% fit.po2m$par$W %>% data.frame
       
-      # Z~T regression
+      # Z~T linear regression
       Tt.po2mfit <- lm(Z.train ~ . -1, data = Tt.train.estim)
       Z.train.pred <- predict(Tt.po2mfit, newdata = Tt.train.estim)
       Z.test.pred <- predict(Tt.po2mfit, newdata = Tt.test.estim)

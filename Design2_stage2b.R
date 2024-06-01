@@ -15,7 +15,7 @@ source('00_function.R')
 load('X_all.RData') # X is generated from PO2PLS once and fixed
 load('C_raw.RData') # C_ij iid b(1,0.8)
 
-rx=2; ry=1
+r=8; rx=2; ry=1
 Nh=1000
 alpha.G <- 0.3
 
@@ -39,7 +39,7 @@ for(N in c(200,2000)){
       X.all <- rbind(X.train, X.test)
       
       #### Generate Y ####
-      W.all <- prcomp(X.all)$rotation[,1:(1+r-1)]
+      W.all <- prcomp(X.all)$rotation[,1:r]
       Tt.all <- X.all %*% W.all
       var.X <- cov(X.all)
       Sig.Tt <- t(W.all) %*% var.X %*% W.all
@@ -115,39 +115,42 @@ for(N in c(200,2000)){
       rmse.Z.prs.test <- sqrt(mean((Z.test - Z.test.pred)^2))
       
       #### APPROACH 2: O2PLS ####
-      
+      # raise r
+      r.new <- q-max(rx,ry)
       ## follow the previous procedure
-      fit.o2m <- o2m(X.train, Y.train, n=r,nx=rx,ny=ry)
-      Tt.train.estim <- X.train %*% fit.o2m$W. %>% as.data.frame
-      Tt.test.estim <- X.test %*% fit.o2m$W. %>% as.data.frame
+      fit.o2m <- o2m(X.train, Y.train, n=r.new,nx=rx,ny=ry)
+      Tt.train.estim <- X.train %*% fit.o2m$W. %>% as.matrix
+      Tt.test.estim <- X.test %*% fit.o2m$W. %>% as.matrix
       
-      # Z~T regression
-      Tt.o2mfit <- lm(Z.train ~ . -1, data = Tt.train.estim)
-      Z.train.pred <- predict(Tt.o2mfit, newdata = Tt.train.estim)
-      Z.test.pred <- predict(Tt.o2mfit, newdata = Tt.test.estim)
+      # Z~T Ridge regression
+      Tt.o2mfit <- cv.glmnet(Tt.train.estim, Z.train, alpha = 0)
+      cat("\nBest Lambda Ridge =", Tt.o2mfit$lambda.min, "\n")
+      
+      Z.train.pred <- predict(Tt.o2mfit, newx = Tt.train.estim, s = "lambda.min")
+      Z.test.pred <- predict(Tt.o2mfit, newx = Tt.test.estim, s = "lambda.min")
       
       sst.Z <- sum((Z.test - mean(Z.test))^2)
       sse.Z <- sum((Z.test - Z.test.pred)^2)
       rsq.Z.o2m <- 1 - sse.Z / sst.Z
-      rsq.Z.o2m
       
       rmse.Z.o2m.train <- sqrt(mean((Z.train - Z.train.pred)^2))
       rmse.Z.o2m.test <- sqrt(mean((Z.test - Z.test.pred)^2))
       
       #### APPROACH 3: PO2PLS ####
-      fit.po2m <- PO2PLS(X.train, Y.train, r=r,rx=rx,ry=ry,steps=1e1)
-      Tt.train.estim <- X.train %*% fit.po2m$par$W %>% data.frame
-      Tt.test.estim <- X.test %*% fit.po2m$par$W %>% data.frame
+      fit.po2m <- PO2PLS(X.train, Y.train, r=r.new,rx=rx,ry=ry,steps=1e3)
+      Tt.train.estim <- X.train %*% fit.po2m$par$W %>% as.matrix
+      Tt.test.estim <- X.test %*% fit.po2m$par$W %>% as.matrix
       
-      # Z~T regression
-      Tt.po2mfit <- lm(Z.train ~ . -1, data = Tt.train.estim)
-      Z.train.pred <- predict(Tt.po2mfit, newdata = Tt.train.estim)
-      Z.test.pred <- predict(Tt.po2mfit, newdata = Tt.test.estim)
+      # Z~T Ridge regression
+      Tt.po2mfit <- cv.glmnet(Tt.train.estim, Z.train, alpha = 0)
+      cat("\nBest Lambda Ridge =", Tt.po2mfit$lambda.min, "\n")
+      
+      Z.train.pred <- predict(Tt.po2mfit, newx = Tt.train.estim, s = "lambda.min")
+      Z.test.pred <- predict(Tt.po2mfit, newx = Tt.test.estim, s = "lambda.min")
       
       sst.Z <- sum((Z.test - mean(Z.test))^2)
       sse.Z <- sum((Z.test - Z.test.pred)^2)
       rsq.Z.po2m <- 1 - sse.Z / sst.Z
-      rsq.Z.po2m
       
       rmse.Z.po2m.train <- sqrt(mean((Z.train - Z.train.pred)^2))
       rmse.Z.po2m.test <- sqrt(mean((Z.test - Z.test.pred)^2))

@@ -11,13 +11,14 @@ library(PO2PLS)
 
 source('00_function.R')
 
-Nh=1000 # test set
-alpha.z <- 0.3
+Nh=1000; Nk=1000 # test set
+alpha.z <- 0.1
 
 for(N in c(200,2000)){
   for(dim in 1:2){
     p <- c(100, 2000)[dim]
     q <- c(15, 25)[dim]
+    
     for(noi in 1:2){ # noise part
       alpha.x <- c(.1,.95)[noi]
       alpha.y <- c(.1,.6)[noi]
@@ -36,7 +37,7 @@ for(N in c(200,2000)){
         params.true$sig2G <- sig2G
         params.true$a <- a
         
-        dat <- generate_data_inclZ(N+Nh, params=params.true, distr=rnorm)
+        dat <- generate_data_inclZ(N+Nh+Nk, params=params.true, distr=rnorm)
         dat$Z <- dat$Z %>% as.matrix()
         
         ## training data
@@ -44,11 +45,15 @@ for(N in c(200,2000)){
         Y.train <- dat$Y[1:N, ] %>% scale(scale = F)
         Z.train <- dat$Z[1:N, ] %>% scale(scale = F)
         ## test data
-        X.test <- dat$X[(N+1):(N+Nh), ] %>% scale(scale = F)
-        Y.test <- dat$Y[(N+1):(N+Nh), ] %>% scale(scale = F)
-        Z.test <- dat$Z[(N+1):(N+Nh), ] %>% scale(scale = F)
+        X.test.1 <- dat$X[(N+1):(N+Nh), ] %>% scale(scale = F)
+        Y.test.1 <- dat$Y[(N+1):(N+Nh), ] %>% scale(scale = F)
+        Z.test.1 <- dat$Z[(N+1):(N+Nh), ] %>% scale(scale = F)
+        
+        X.test.2 <- dat$X[-(1:(N+Nh)), ] %>% scale(scale = F)
+        Y.test.2 <- dat$Y[-(1:(N+Nh)), ] %>% scale(scale = F)
+        Z.test.2 <- dat$Z[-(1:(N+Nh)), ] %>% scale(scale = F)
        
-# 2. 3 models ------------------------------------------------------------------
+# 2. 3models -------------------------------------------------------------------
         
         ###  -------------------------------  ###
         #### APPROACH 1: PRS (Ridge & LASSO) ####
@@ -76,95 +81,78 @@ for(N in c(200,2000)){
                                }
         )
         
-        Y.test.pred <- sapply(models.LASSO, 
+        Y.test.1.pred <- sapply(models.LASSO, 
                                 function(model){
-                                  predict(model, newx=X.test)
+                                  predict(model, newx=X.test.1)
+                                }
+        )
+        
+        Y.test.2.pred <- sapply(models.LASSO, 
+                                function(model){
+                                  predict(model, newx=X.test.2)
                                 }
         )
         
         ## Ridge Z~Y
-        fit.Ridge <- cv.glmnet(Y.test.pred, Z.test, alpha = 0)
+        fit.Ridge <- cv.glmnet(Y.test.1.pred, Z.test.1, alpha = 0)
         cat("\nBest Lambda Ridge =", fit.Ridge$lambda.min, "\n")
         
-        Z.train.pred <- predict(fit.Ridge, newx = Y.train.pred, s = "lambda.min")
-        Z.test.pred <- predict(fit.Ridge, newx = Y.test.pred, s = "lambda.min")
+        Z.test.1.pred <- predict(fit.Ridge, newx = Y.test.1.pred, s = "lambda.min")
+        Z.test.2.pred <- predict(fit.Ridge, newx = Y.test.2.pred, s = "lambda.min")
         
-        sst.Z <- sum((Z.test - mean(Z.test))^2)
-        sse.Z <- sum((Z.test - Z.test.pred)^2)
+        sst.Z <- sum((Z.test.2 - mean(Z.test.2))^2)
+        sse.Z <- sum((Z.test.2 - Z.test.2.pred)^2)
         rsq.Z.prs <- 1 - sse.Z / sst.Z
         
-        rmse.Z.prs.train <- sqrt(mean((Z.train - Z.train.pred)^2))
-        rmse.Z.prs.test <- sqrt(mean((Z.test - Z.test.pred)^2))
+        rmse.Z.prs.train <- sqrt(mean((Z.test.1 - Z.test.1.pred)^2))
+        rmse.Z.prs.test <- sqrt(mean((Z.test.2 - Z.test.2.pred)^2))
         
         ###  -----------------  ###
         #### APPROACH 2: O2PLS ####
         ###  -----------------  ###
         
-        ## choose r before fitting model
-        choose_r <- function(r_try = 1:(q-rx)){
-          r_hats <- sapply(r_try, function(ii){
-            fit.o2m <- o2m(X.train, Y.train, n=ii,nx=0,ny=0)
-            T.estim <- X.train %*% fit.o2m$W.
-            X.test.A <- X.test[1:(Nh/2),]
-            X.test.B <- X.test[(Nh/2+1):Nh,]
-            Z.test.A <- Z.test[1:(Nh/2)]
-            Z.test.B <- Z.test[-(1:(Nh/2))]
-            T.test.A.estim <- X.test.A %*% fit.o2m$W.
-            T.test.B.estim <- X.test.B %*% fit.o2m$W.
-            
-            # Z~T regression
-            T.dat <- data.frame(V = T.test.A.estim)
-            T.o2mfit <- lm(Z.test.A ~ ., data = T.dat) # estimation of a and a0
-            Z.test.A.pred <- predict(T.o2mfit, newdata = data.frame(V = T.test.A.estim))
-            Z.test.B.pred <- predict(T.o2mfit, newdata = data.frame(V = T.test.B.estim))
-            
-            sst.Z <- sum((Z.test.B - mean(Z.test.B))^2)
-            sse.Z <- sum((Z.test.B - Z.test.B.pred)^2)
-            rsq.Z.o2m <- 1 - sse.Z / sst.Z
-            return(rsq.Z.o2m)
-          })
-          r_try[which.max(r_hats)]
-        }
-        r <- choose_r(1:(q-rx))
-        
         cat("Starting O2PLS method...\n")
         fit.o2m <- o2m(X.train, Y.train, n=r,nx=rx,ny=ry)
         T.estim <- X.train %*% fit.o2m$W.
-        T.test.estim <- X.test %*% fit.o2m$W.
+        T.test.1.estim <- X.test.1 %*% fit.o2m$W.
+        T.test.2.estim <- X.test.2 %*% fit.o2m$W.
         
         # Z~T regression
-        T.dat <- data.frame(V = T.test.estim)
-        T.o2mfit <- lm(Z.test ~ ., data = T.dat) # estimation of a and a0
-        Z.test.pred <- predict(T.o2mfit, newdata = data.frame(V = T.test.estim))
+        T.dat <- data.frame(V = T.test.1.estim)
+        T.o2mfit <- lm(Z.test.1 ~ . -1, data = T.dat) # estimation of a and a0
+        Z.test.1.pred <- predict(T.o2mfit, newdata = data.frame(V = T.test.1.estim))
+        Z.test.2.pred <- predict(T.o2mfit, newdata = data.frame(V = T.test.2.estim))
         
-        sst.Z <- sum((Z.test - mean(Z.test))^2)
-        sse.Z <- sum((Z.test - Z.test.pred)^2)
+        sst.Z <- sum((Z.test.2 - mean(Z.test.2))^2)
+        sse.Z <- sum((Z.test.2 - Z.test.2.pred)^2)
         rsq.Z.o2m <- 1 - sse.Z / sst.Z
         
-        rmse.Z.o2m.train <- sqrt(mean((Z.train - Z.train.pred)^2))
-        rmse.Z.o2m.test <- sqrt(mean((Z.test - Z.test.pred)^2))
+        rmse.Z.o2m.train <- sqrt(mean((Z.test.1 - Z.test.1.pred)^2))
+        rmse.Z.o2m.test <- sqrt(mean((Z.test.2 - Z.test.2.pred)^2))
         
         ###  ------------------  ###
         #### APPROACH 3: PO2PLS ####
         ###  ------------------  ###
         
         cat("Starting PO2PLS method...\n")
-        fit.po2m <- PO2PLS(X.train, Y.train, r=r,rx=rx,ry=ry,steps=1e3) # r is same as APPROACH 2
+        fit.po2m <- PO2PLS(X.train, Y.train, r=r,rx=rx,ry=ry,steps=1e3)
         T.estim <- X.train %*% fit.po2m$par$W
-        T.test.estim <- X.test %*% fit.po2m$par$W
+        T.test.1.estim <- X.test.1 %*% fit.po2m$par$W
+        T.test.2.estim <- X.test.2 %*% fit.po2m$par$W
         
         # Z~T regression
-        T.dat <- data.frame(V = T.test.estim)
-        T.po2mfit <- lm(Z.test ~ ., data = T.dat) # estimation of a and a0
-        Z.test.pred <- predict(T.po2mfit, newdata = data.frame(V = T.test.estim))
+        T.dat <- data.frame(V = T.test.1.estim)
+        T.po2mfit <- lm(Z.test.1 ~ . -1, data = T.dat) # estimation of a and a0
+        Z.test.1.pred <- predict(T.po2mfit, newdata = data.frame(V = T.test.1.estim))
+        Z.test.2.pred <- predict(T.po2mfit, newdata = data.frame(V = T.test.2.estim))
         
-        sst.Z <- sum((Z.test - mean(Z.test))^2)
-        sse.Z <- sum((Z.test - Z.test.pred)^2)
+        sst.Z <- sum((Z.test.2 - mean(Z.test.2))^2)
+        sse.Z <- sum((Z.test.2 - Z.test.2.pred)^2)
         rsq.Z.po2m <- 1 - sse.Z / sst.Z
         
-        rmse.Z.po2m.train <- sqrt(mean((Z.train - Z.train.pred)^2))
-        rmse.Z.po2m.test <- sqrt(mean((Z.test - Z.test.pred)^2))
-
+        rmse.Z.po2m.train <- sqrt(mean((Z.test.1 - Z.test.1.pred)^2))
+        rmse.Z.po2m.test <- sqrt(mean((Z.test.2 - Z.test.2.pred)^2))
+        
         # save RData
         rsq.Z <- tibble(PRS = rsq.Z.prs, O2M = rsq.Z.o2m, PO2M = rsq.Z.po2m)
         save(rsq.Z, file=paste0("outp_N_",N,"_dim_",dim,"_Noi_",noi,"_alphatu_",alpha.tu, "_ID_",arrID, ".RData"))
